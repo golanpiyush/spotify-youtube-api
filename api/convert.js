@@ -1,17 +1,26 @@
 // api/convert.js
-import ytsr from 'ytsr';
-
-// CORS headers for Flutter app
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
-};
-
 export default async function handler(req, res) {
-  // Handle preflight OPTIONS request
+  // CORS headers
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  // Handle preflight
   if (req.method === 'OPTIONS') {
-    return res.status(200).json({});
+    return res.status(200).end();
+  }
+
+  // Handle GET (for testing)
+  if (req.method === 'GET') {
+    return res.status(200).json({ 
+      status: 'API is running!',
+      message: 'Send POST request with tracks array',
+      example: {
+        tracks: [
+          { title: 'Honeythief', artists: ['Halou'] }
+        ]
+      }
+    });
   }
 
   if (req.method !== 'POST') {
@@ -23,7 +32,7 @@ export default async function handler(req, res) {
 
     if (!tracks || !Array.isArray(tracks)) {
       return res.status(400).json({ 
-        error: 'Invalid request. Send { tracks: [{title, artists}] }' 
+        error: 'Invalid request. Expected { tracks: [{title, artists}] }' 
       });
     }
 
@@ -33,15 +42,25 @@ export default async function handler(req, res) {
     const results = await Promise.all(
       tracks.map(async (track, index) => {
         try {
-          const query = `${track.title} ${track.artists.join(' ')} audio`;
-          console.log(`[${index + 1}/${tracks.length}] Searching: ${query}`);
-
-          // Search YouTube
-          const searchResults = await ytsr(query, { limit: 1 });
+          const query = encodeURIComponent(
+            `${track.title} ${track.artists.join(' ')} official audio`
+          );
           
-          if (searchResults.items.length > 0) {
-            const video = searchResults.items[0];
-            const videoId = video.id;
+          console.log(`[${index + 1}/${tracks.length}] Searching: ${track.title}`);
+          
+          // Use Invidious API (no authentication needed)
+          const searchUrl = `https://inv.nadeko.net/api/v1/search?q=${query}&type=video`;
+          const response = await fetch(searchUrl);
+          
+          if (!response.ok) {
+            throw new Error(`Search failed with status ${response.status}`);
+          }
+          
+          const data = await response.json();
+          
+          if (data && data.length > 0) {
+            const video = data[0];
+            const videoId = video.videoId;
             
             console.log(`✅ Found: ${video.title} -> ${videoId}`);
             
@@ -50,8 +69,8 @@ export default async function handler(req, res) {
               artists: track.artists,
               youtubeId: videoId,
               youtubeTitle: video.title,
-              duration: video.duration,
-              thumbnail: video.bestThumbnail?.url || null,
+              duration: video.lengthSeconds,
+              thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
               success: true,
             };
           } else {
@@ -90,17 +109,10 @@ export default async function handler(req, res) {
     });
 
   } catch (error) {
-    console.error('❌ Vibeflow Server error:', error);
+    console.error('❌ Server error:', error);
     return res.status(500).json({ 
-      error: 'Vibeflow Internal server error', 
+      error: 'Internal server error', 
       message: error.message 
     });
   }
 }
-
-// Enable CORS
-export const config = {
-  api: {
-    bodyParser: true,
-  },
-};
